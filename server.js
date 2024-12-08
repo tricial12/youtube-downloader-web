@@ -11,7 +11,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
-// 存储下载进度
+// 存储下载信息
 const downloads = new Map();
 
 // 处理下载请求
@@ -25,10 +25,13 @@ app.post('/api/download', async (req, res) => {
         
         // 初始化下载信息
         downloads.set(downloadId, {
+            url,
             progress: 0,
             status: 'starting',
             title,
-            format
+            format,
+            quality,
+            formatOption: null
         });
 
         // 选择格式
@@ -53,7 +56,47 @@ app.post('/api/download', async (req, res) => {
             }
         }
 
-        // 开始下载
+        // 保存格式选项
+        downloads.get(downloadId).formatOption = formatOption;
+
+        // 返回下载ID
+        res.json({ downloadId });
+
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 获取下载进度
+app.get('/api/progress/:downloadId', (req, res) => {
+    const downloadId = req.params.downloadId;
+    const download = downloads.get(downloadId);
+    
+    if (download) {
+        res.json(download);
+    } else {
+        res.status(404).json({ error: 'Download not found' });
+    }
+});
+
+// 获取文件
+app.get('/api/file/:downloadId', async (req, res) => {
+    const downloadId = req.params.downloadId;
+    const download = downloads.get(downloadId);
+    
+    if (!download) {
+        return res.status(404).json({ error: 'Download not found' });
+    }
+
+    try {
+        const { url, title, format, formatOption } = download;
+        
+        // 设置响应头
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(title)}.${format}`);
+
+        // 创建下载流
         const stream = ytdl(url, formatOption);
         let totalBytes = 0;
         let downloadedBytes = 0;
@@ -80,43 +123,17 @@ app.post('/api/download', async (req, res) => {
         stream.on('error', error => {
             downloads.get(downloadId).status = 'error';
             downloads.get(downloadId).error = error.message;
+            console.error('Stream error:', error);
         });
 
-        // 返回下载ID
-        res.json({ downloadId });
+        // 直接传输到客户端
+        stream.pipe(res);
 
     } catch (error) {
-        console.error('Error:', error);
+        console.error('Download error:', error);
+        downloads.get(downloadId).status = 'error';
+        downloads.get(downloadId).error = error.message;
         res.status(500).json({ error: error.message });
-    }
-});
-
-// 获取下载进度
-app.get('/api/progress/:downloadId', (req, res) => {
-    const downloadId = req.params.downloadId;
-    const download = downloads.get(downloadId);
-    
-    if (download) {
-        res.json(download);
-    } else {
-        res.status(404).json({ error: 'Download not found' });
-    }
-});
-
-// 获取文件
-app.get('/api/file/:downloadId', (req, res) => {
-    const downloadId = req.params.downloadId;
-    const download = downloads.get(downloadId);
-    
-    if (download && download.status === 'completed') {
-        const { title, format } = download;
-        
-        res.setHeader('Content-Type', 'application/octet-stream');
-        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(title)}.${format}`);
-        
-        ytdl(url, formatOption).pipe(res);
-    } else {
-        res.status(404).json({ error: 'File not ready or not found' });
     }
 });
 
