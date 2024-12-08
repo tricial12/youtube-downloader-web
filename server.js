@@ -19,8 +19,8 @@ function log(message, data = '') {
     console.log(`[${timestamp}] ${message}`, data);
 }
 
-// 初始化 yt-dlp
-const ytDlp = new YTDlpWrap();
+// 初始化 yt-dlp（使用系统安装的版本）
+const ytDlp = new YTDlpWrap('/usr/local/bin/yt-dlp');
 
 // 处理下载请求
 app.post('/api/download', async (req, res) => {
