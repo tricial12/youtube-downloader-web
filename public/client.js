@@ -60,23 +60,27 @@ document.getElementById('startDownload').addEventListener('click', async () => {
 
             if (response.ok) {
                 const reader = response.body.getReader();
-                const contentLength = +response.headers.get('Content-Length');
+                const contentLength = response.headers.get('content-length');
                 let receivedLength = 0;
 
-                while(true) {
-                    const {done, value} = await reader.read();
+                const chunks = [];
+                while (true) {
+                    const { done, value } = await reader.read();
                     if (done) break;
-                    
+
+                    chunks.push(value);
                     receivedLength += value.length;
+
                     const progress = contentLength ? 
-                        Math.round((receivedLength / contentLength) * 100) : 
+                        Math.round((receivedLength / parseInt(contentLength)) * 100) : 
                         'downloading...';
-                    
+
                     div.querySelector('.progress').textContent = `${progress}%`;
+                    div.querySelector('.status').textContent = '下载中...';
                 }
 
-                // 下载完成后保存文件
-                const blob = await response.blob();
+                // 合并数据并下载
+                const blob = new Blob(chunks);
                 const downloadUrl = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = downloadUrl;

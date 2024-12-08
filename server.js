@@ -32,38 +32,51 @@ app.post('/api/download', async (req, res) => {
         const info = await ytdl.getInfo(url);
         const title = info.videoDetails.title;
 
-        // 选择合适的格式
-        let format_id;
-        if (format === 'mp3') {
-            format_id = ytdl.chooseFormat(info.formats, { quality: 'highestaudio' }).itag;
-        } else {
-            if (quality === 'highest') {
-                format_id = ytdl.chooseFormat(info.formats, { quality: 'highestvideo' }).itag;
-            } else {
-                const height = parseInt(quality.replace('p', ''));
-                format_id = ytdl.chooseFormat(info.formats, { 
-                    quality: 'highest',
-                    filter: format => format.height <= height
-                }).itag;
-            }
-        }
-
         // 设置响应头
         res.setHeader('Content-Type', 'application/octet-stream');
         res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(title)}.${format}`);
-        res.setHeader('Transfer-Encoding', 'chunked');
 
-        // 创建流并设置错误处理
-        const stream = ytdl(url, { format: format_id });
-        
+        // 选择最佳格式
+        let formatOption;
+        if (format === 'mp3') {
+            formatOption = ytdl.chooseFormat(info.formats, { quality: 'highestaudio' });
+        } else {
+            if (quality === 'highest') {
+                formatOption = ytdl.chooseFormat(info.formats, { quality: 'highest' });
+            } else {
+                const height = parseInt(quality.replace('p', ''));
+                formatOption = ytdl.chooseFormat(info.formats.filter(f => f.height <= height), { quality: 'highest' });
+            }
+        }
+
+        // 开始下载
+        const stream = ytdl(url, { format: formatOption });
+
+        // 错误处理
         stream.on('error', (error) => {
-            console.error('Stream error:', error);
+            console.error('Download error:', error);
             if (!res.headersSent) {
                 res.status(500).json({ error: '下载失败' });
             }
         });
 
-        // 使用管道传输数据
+        // 进度处理
+        let totalSize = 0;
+        let downloaded = 0;
+
+        stream.on('response', (response) => {
+            totalSize = parseInt(response.headers['content-length'], 10);
+        });
+
+        stream.on('data', (chunk) => {
+            downloaded += chunk.length;
+            if (totalSize) {
+                const progress = (downloaded / totalSize) * 100;
+                res.write(`data: ${JSON.stringify({ progress })}\n\n`);
+            }
+        });
+
+        // 直接下载
         stream.pipe(res);
 
     } catch (error) {
