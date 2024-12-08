@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' https:; script-src 'self'; style-src 'self' 'unsafe-inline'">
+    <title>YouTube 批量下载器</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>YouTube 批量下载器</h1>
+        
+        <div class="input-section">
+            <textarea id="urlList" placeholder="请输入YouTube视频链接，每行一个..."></textarea>
+            <div class="options">
+                <select id="quality">
+                    <option value="highest">最高质量</option>
+                    <option value="1080p">1080p</option>
+                    <option value="720p">720p</option>
+                    <option value="480p">480p</option>
+                    <option value="360p">360p</option>
+                </select>
+                <select id="format">
+                    <option value="mp4">MP4</option>
+                    <option value="mp3">仅音频(MP3)</option>
+                </select>
+            </div>
+            <button id="startDownload">开始下载</button>
+        </div>
+
+        <div class="download-list">
+            <h2>下载列表</h2>
+            <div id="downloadQueue"></div>
+        </div>
+    </div>
+    <script src="client.js"></script>
+</body>
+</html>
