@@ -1,4 +1,4 @@
-const API_URL = 'https://shipingdownloader.website/api';
+const API_URL = 'https://youtube-downloader-jw92.onrender.com/api';
 
 document.getElementById('startDownload').addEventListener('click', async () => {
     const urls = document.getElementById('urlList').value
