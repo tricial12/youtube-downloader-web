@@ -1,5 +1,21 @@
 const API_URL = 'https://youtube-downloader-jw92.onrender.com/api';
 
+// 添加选择路径的功能
+document.getElementById('choosePath').addEventListener('click', async () => {
+    try {
+        const response = await fetch(`${API_URL}/select-path`, {
+            method: 'POST'
+        });
+        if (response.ok) {
+            const { path } = await response.json();
+            document.getElementById('savePath').value = path;
+        }
+    } catch (error) {
+        console.error('选择路径失败:', error);
+    }
+});
+
+// 修改下载功能
 document.getElementById('startDownload').addEventListener('click', async () => {
     const urls = document.getElementById('urlList').value
         .split('\n')
@@ -12,6 +28,7 @@ document.getElementById('startDownload').addEventListener('click', async () => {
 
     const quality = document.getElementById('quality').value;
     const format = document.getElementById('format').value;
+    const savePath = document.getElementById('savePath').value;
 
     if (!urls.length) {
         alert('请输入有效的YouTube视频链接');
@@ -33,66 +50,43 @@ document.getElementById('startDownload').addEventListener('click', async () => {
             `;
             downloadQueue.appendChild(div);
 
-            // 先获取视频信息
-            const infoResponse = await fetch(`${API_URL}/info`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ url })
-            });
-
-            if (!infoResponse.ok) {
-                throw new Error('获取视频信息失败');
-            }
-
-            const info = await infoResponse.json();
-            div.querySelector('.status').textContent = '开始下载...';
-
             // 开始下载
             const response = await fetch(`${API_URL}/download`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ url, quality, format })
+                body: JSON.stringify({ 
+                    url, 
+                    quality, 
+                    format,
+                    savePath 
+                })
             });
 
             if (response.ok) {
-                const reader = response.body.getReader();
-                const contentLength = response.headers.get('content-length');
-                let receivedLength = 0;
-
-                const chunks = [];
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-
-                    chunks.push(value);
-                    receivedLength += value.length;
-
-                    const progress = contentLength ? 
-                        Math.round((receivedLength / parseInt(contentLength)) * 100) : 
-                        'downloading...';
-
-                    div.querySelector('.progress').textContent = `${progress}%`;
+                // 使用 EventSource 来接收进度更新
+                const eventSource = new EventSource(`${API_URL}/progress/${encodeURIComponent(url)}`);
+                
+                eventSource.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    div.querySelector('.progress').textContent = `${Math.round(data.progress)}%`;
                     div.querySelector('.status').textContent = '下载中...';
-                }
+                    
+                    if (data.progress >= 100) {
+                        eventSource.close();
+                        div.querySelector('.status').textContent = '完成';
+                        div.classList.add('complete');
+                        
+                        // 触发下载
+                        window.location.href = `${API_URL}/download/${encodeURIComponent(url)}`;
+                    }
+                };
 
-                // 合并数据并下载
-                const blob = new Blob(chunks);
-                const downloadUrl = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = downloadUrl;
-                a.download = `${info.title}.${format}`;
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(downloadUrl);
-                document.body.removeChild(a);
-
-                div.querySelector('.progress').textContent = '100%';
-                div.querySelector('.status').textContent = '完成';
-                div.classList.add('complete');
+                eventSource.onerror = () => {
+                    eventSource.close();
+                    throw new Error('下载过程中断');
+                };
             } else {
                 throw new Error('下载失败');
             }

@@ -2,6 +2,7 @@ const express = require('express');
 const path = require('path');
 const cors = require('cors');
 const ytdl = require('ytdl-core');
+const fs = require('fs');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -10,33 +11,29 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
-// 获取视频信息
-app.post('/api/info', async (req, res) => {
-    const { url } = req.body;
-    try {
-        const info = await ytdl.getInfo(url);
-        res.json({
-            title: info.videoDetails.title,
-            formats: info.formats
-        });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
+// 存储下载进度
+const downloadProgress = new Map();
+
+// 选择保存路径
+app.post('/api/select-path', (req, res) => {
+    // 在服务器端，我们只能提供一个默认路径
+    const defaultPath = '/downloads';
+    res.json({ path: defaultPath });
 });
 
-// 处理下载请求
+// 开始下载
 app.post('/api/download', async (req, res) => {
     const { url, quality, format } = req.body;
     
     try {
         const info = await ytdl.getInfo(url);
         const title = info.videoDetails.title;
-
-        // 设置响应头
-        res.setHeader('Content-Type', 'application/octet-stream');
-        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(title)}.${format}`);
-
-        // 选择最佳格式
+        const fileName = `${title}.${format}`;
+        
+        // 初始化进度
+        downloadProgress.set(url, { progress: 0, fileName });
+        
+        // 选择格式
         let formatOption;
         if (format === 'mp3') {
             formatOption = ytdl.chooseFormat(info.formats, { quality: 'highestaudio' });
@@ -49,18 +46,10 @@ app.post('/api/download', async (req, res) => {
             }
         }
 
-        // 开始下载
+        // 创建下载流
         const stream = ytdl(url, { format: formatOption });
-
-        // 错误处理
-        stream.on('error', (error) => {
-            console.error('Download error:', error);
-            if (!res.headersSent) {
-                res.status(500).json({ error: '下载失败' });
-            }
-        });
-
-        // 进度处理
+        
+        // 监听进度
         let totalSize = 0;
         let downloaded = 0;
 
@@ -72,16 +61,49 @@ app.post('/api/download', async (req, res) => {
             downloaded += chunk.length;
             if (totalSize) {
                 const progress = (downloaded / totalSize) * 100;
-                res.write(`data: ${JSON.stringify({ progress })}\n\n`);
+                downloadProgress.set(url, { progress, fileName });
             }
         });
 
-        // 直接下载
-        stream.pipe(res);
-
+        res.json({ status: 'started' });
     } catch (error) {
         console.error('Error:', error);
         res.status(500).json({ error: error.message });
+    }
+});
+
+// 获取进度
+app.get('/api/progress/:url', (req, res) => {
+    const url = decodeURIComponent(req.params.url);
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    const sendProgress = () => {
+        const progress = downloadProgress.get(url);
+        if (progress) {
+            res.write(`data: ${JSON.stringify(progress)}\n\n`);
+        }
+    };
+
+    const progressInterval = setInterval(sendProgress, 1000);
+
+    req.on('close', () => {
+        clearInterval(progressInterval);
+    });
+});
+
+// 获取文件
+app.get('/api/download/:url', (req, res) => {
+    const url = decodeURIComponent(req.params.url);
+    const progress = downloadProgress.get(url);
+    
+    if (progress && progress.fileName) {
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(progress.fileName)}`);
+        ytdl(url).pipe(res);
+    } else {
+        res.status(404).json({ error: '文件不存在' });
     }
 });
 
