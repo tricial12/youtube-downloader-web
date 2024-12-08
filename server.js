@@ -92,12 +92,50 @@ app.get('/api/file/:downloadId', async (req, res) => {
     try {
         const { url, title, format, formatOption } = download;
         
+        // 通用下载选项
+        const downloadOptions = {
+            quality: format === 'mp3' ? 'highestaudio' : 'highestvideo',
+            filter: format === 'mp3' ? 'audioonly' : 'audioandvideo',
+            format: format,
+            requestOptions: {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                }
+            }
+        };
+
+        // 获取视频信息
+        const info = await ytdl.getInfo(url);
+        console.log('Available formats:', info.formats);
+
+        // 选择最佳格式
+        let selectedFormat = ytdl.chooseFormat(info.formats, {
+            quality: downloadOptions.quality,
+            filter: downloadOptions.filter
+        });
+        console.log('Selected format:', selectedFormat);
+
         // 设置响应头
         res.setHeader('Content-Type', 'application/octet-stream');
         res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(title)}.${format}`);
 
         // 创建下载流
-        const stream = ytdl(url, formatOption);
+        const stream = ytdl(url, {
+            ...downloadOptions,
+            format: selectedFormat
+        });
+
+        // 错误处理
+        stream.on('error', error => {
+            console.error('Stream error:', error);
+            downloads.get(downloadId).status = 'error';
+            downloads.get(downloadId).error = error.message;
+            if (!res.headersSent) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // 进度处理
         let totalBytes = 0;
         let downloadedBytes = 0;
 
@@ -105,6 +143,7 @@ app.get('/api/file/:downloadId', async (req, res) => {
             totalBytes = parseInt(response.headers['content-length'], 10);
             downloads.get(downloadId).totalBytes = totalBytes;
             downloads.get(downloadId).status = 'downloading';
+            console.log('Download started, total size:', totalBytes);
         });
 
         stream.on('data', chunk => {
@@ -112,18 +151,14 @@ app.get('/api/file/:downloadId', async (req, res) => {
             if (totalBytes) {
                 const progress = (downloadedBytes / totalBytes) * 100;
                 downloads.get(downloadId).progress = progress;
+                console.log('Download progress:', progress.toFixed(2) + '%');
             }
         });
 
         stream.on('end', () => {
+            console.log('Download completed');
             downloads.get(downloadId).status = 'completed';
             downloads.get(downloadId).progress = 100;
-        });
-
-        stream.on('error', error => {
-            downloads.get(downloadId).status = 'error';
-            downloads.get(downloadId).error = error.message;
-            console.error('Stream error:', error);
         });
 
         // 直接传输到客户端
@@ -133,7 +168,9 @@ app.get('/api/file/:downloadId', async (req, res) => {
         console.error('Download error:', error);
         downloads.get(downloadId).status = 'error';
         downloads.get(downloadId).error = error.message;
-        res.status(500).json({ error: error.message });
+        if (!res.headersSent) {
+            res.status(500).json({ error: error.message });
+        }
     }
 });
 
