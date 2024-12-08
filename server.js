@@ -1,7 +1,7 @@
 const express = require('express');
 const path = require('path');
 const cors = require('cors');
-const youtubedl = require('youtube-dl-exec');
+const { YTDlpWrap } = require('yt-dlp-wrap');
 const fs = require('fs');
 
 const app = express();
@@ -19,6 +19,9 @@ function log(message, data = '') {
     console.log(`[${timestamp}] ${message}`, data);
 }
 
+// 初始化 yt-dlp
+const ytDlp = new YTDlpWrap();
+
 // 处理下载请求
 app.post('/api/download', async (req, res) => {
     const { url, quality, format } = req.body;
@@ -26,14 +29,7 @@ app.post('/api/download', async (req, res) => {
     
     try {
         // 获取视频信息
-        const info = await youtubedl(url, {
-            dumpSingleJson: true,
-            noWarnings: true,
-            noCallHome: true,
-            preferFreeFormats: true,
-            youtubeSkipDashManifest: true
-        });
-
+        const info = await ytDlp.getVideoInfo(url);
         const title = info.title;
         const downloadId = Date.now().toString();
         
@@ -82,22 +78,26 @@ app.get('/api/file/:downloadId', async (req, res) => {
         const { url, title, format, quality } = download;
 
         // 设置下载选项
-        const options = {
-            format: format === 'mp3' ? 'bestaudio' : 'bestvideo+bestaudio',
-            output: '-',
-            noWarnings: true,
-            noCallHome: true,
-            preferFreeFormats: true,
-            youtubeSkipDashManifest: true
-        };
+        const options = [
+            '--no-warnings',
+            '--no-call-home',
+            '--prefer-free-formats'
+        ];
 
         if (format === 'mp3') {
-            options.extractAudio = true;
-            options.audioFormat = 'mp3';
-            options.audioQuality = 0;
-        } else if (quality !== 'highest') {
-            const height = parseInt(quality.replace('p', ''));
-            options.format = `bestvideo[height<=${height}]+bestaudio/best[height<=${height}]`;
+            options.push(
+                '-x',
+                '--audio-format', 'mp3',
+                '--audio-quality', '0'
+            );
+        } else {
+            if (quality === 'highest') {
+                options.push('-f', 'bestvideo+bestaudio/best');
+            } else {
+                const height = parseInt(quality.replace('p', ''));
+                options.push('-f', `bestvideo[height<=${height}]+bestaudio/best[height<=${height}]`);
+            }
+            options.push('--merge-output-format', 'mp4');
         }
 
         // 设置响应头
@@ -105,42 +105,25 @@ app.get('/api/file/:downloadId', async (req, res) => {
         res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(title)}.${format}`);
 
         // 开始下载
-        const downloadProcess = youtubedl.exec(url, {
-            ...options,
-            output: '-'
+        const downloadProcess = ytDlp.execStream([url, ...options]);
+
+        downloadProcess.pipe(res);
+
+        downloadProcess.on('progress', (progress) => {
+            downloads.get(downloadId).progress = progress.percent;
+            log('下载进度:', `${progress.percent.toFixed(2)}%`);
         });
 
-        downloadProcess.stdout.pipe(res);
-
-        let totalSize = 0;
-        let downloadedSize = 0;
-
-        downloadProcess.stdout.on('data', chunk => {
-            downloadedSize += chunk.length;
-            if (totalSize === 0) {
-                totalSize = parseInt(chunk.toString().match(/size=(\d+)/)?.[1] || 0);
-            }
-            if (totalSize > 0) {
-                const progress = (downloadedSize / totalSize) * 100;
-                downloads.get(downloadId).progress = progress;
-                log('下载进度:', `${progress.toFixed(2)}%`);
-            }
+        downloadProcess.on('error', (error) => {
+            log('下载错误:', error);
+            downloads.get(downloadId).status = 'error';
+            downloads.get(downloadId).error = error.message;
         });
 
-        downloadProcess.stderr.on('data', data => {
-            log('下载信息:', data.toString());
-        });
-
-        downloadProcess.on('close', code => {
-            if (code === 0) {
-                downloads.get(downloadId).status = 'completed';
-                downloads.get(downloadId).progress = 100;
-                log('下载完成');
-            } else {
-                downloads.get(downloadId).status = 'error';
-                downloads.get(downloadId).error = `下载失败，退出码: ${code}`;
-                log('下载失败:', code);
-            }
+        downloadProcess.on('end', () => {
+            log('下载完成');
+            downloads.get(downloadId).status = 'completed';
+            downloads.get(downloadId).progress = 100;
         });
 
     } catch (error) {
